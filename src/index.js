@@ -19,7 +19,42 @@ admin.initializeApp({
 
 const db = admin.firestore();
 const FieldValue = admin.firestore.FieldValue;
+const Timestamp = admin.firestore.Timestamp;
 const app = express();
+
+const HEX_COLOR_REGEX = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
+
+const isValidHexColor = (value) => typeof value === 'string' && HEX_COLOR_REGEX.test(value);
+
+const parseDueDateInput = (value) => {
+  if (value === undefined || value === null || value === '') {
+    return { ok: true, value: null };
+  }
+  if (typeof value !== 'string') {
+    return { ok: false, error: 'dueDate must be an ISO 8601 string or null' };
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return { ok: false, error: 'dueDate must be a valid ISO 8601 date' };
+  }
+  return { ok: true, value: Timestamp.fromDate(parsed) };
+};
+
+const formatTimestampField = (value) => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value?.toDate === 'function') {
+    return value.toDate().toISOString();
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  return null;
+};
 
 // Security Middleware
 app.use(helmet());
@@ -49,7 +84,7 @@ app.use(express.json({ limit: '10kb' }));
 
 // Input validation middleware
 const validateTaskInput = (req, res, next) => {
-  const { title } = req.body;
+  const { title, dueDate, color } = req.body;
 
   if (!title || typeof title !== 'string') {
     return res.status(400).json({ error: 'Title is required and must be a string' });
@@ -59,27 +94,61 @@ const validateTaskInput = (req, res, next) => {
     return res.status(400).json({ error: 'Title must be between 1 and 500 characters' });
   }
 
-  // Sanitize title
+  const parsedDue = parseDueDateInput(dueDate);
+  if (!parsedDue.ok) {
+    return res.status(400).json({ error: parsedDue.error });
+  }
+
+  if (color !== undefined && color !== null) {
+    if (typeof color !== 'string' || !isValidHexColor(color)) {
+      return res.status(400).json({ error: 'color must be a valid hex string like #RGB or #RRGGBB, or null' });
+    }
+  }
+
   req.body.title = title.trim();
+  req.body._parsedDueDate = parsedDue.value;
   next();
 };
 
 // Sanitize update data
 const sanitizeUpdateData = (updates) => {
-  const allowedFields = ['title', 'completed'];
   const sanitized = {};
 
-  for (const key of Object.keys(updates)) {
-    if (allowedFields.includes(key)) {
-      if (key === 'title' && typeof updates[key] === 'string') {
-        sanitized[key] = updates[key].trim().substring(0, 500);
-      } else if (key === 'completed' && typeof updates[key] === 'boolean') {
-        sanitized[key] = updates[key];
-      }
+  if (Object.prototype.hasOwnProperty.call(updates, 'title')) {
+    if (typeof updates.title !== 'string') {
+      return { error: 'title must be a string' };
     }
+    const t = updates.title.trim();
+    if (t.length === 0 || t.length > 500) {
+      return { error: 'Title must be between 1 and 500 characters' };
+    }
+    sanitized.title = t;
   }
 
-  return sanitized;
+  if (Object.prototype.hasOwnProperty.call(updates, 'completed')) {
+    if (typeof updates.completed !== 'boolean') {
+      return { error: 'completed must be a boolean' };
+    }
+    sanitized.completed = updates.completed;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'dueDate')) {
+    const parsed = parseDueDateInput(updates.dueDate);
+    if (!parsed.ok) {
+      return { error: parsed.error };
+    }
+    sanitized.dueDate = parsed.value;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'color')) {
+    const c = updates.color;
+    if (c !== null && (typeof c !== 'string' || !isValidHexColor(c))) {
+      return { error: 'color must be a valid hex string like #RGB or #RRGGBB, or null' };
+    }
+    sanitized.color = c;
+  }
+
+  return { data: sanitized };
 };
 
 const formatTaskData = (doc) => {
@@ -88,6 +157,8 @@ const formatTaskData = (doc) => {
     id: doc.id,
     title: data.title,
     completed: data.completed,
+    dueDate: formatTimestampField(data.dueDate),
+    color: data.color ?? null,
     createdAt: data.createdAt?.toDate?.() ? data.createdAt.toDate().toISOString() : data.createdAt
   };
 };
@@ -122,17 +193,61 @@ app.get('/tasks', async (req, res) => {
   }
 });
 
+app.post('/tasks/bulk-delete', async (req, res) => {
+  try {
+    const { ids } = req.body;
+
+    if (!Array.isArray(ids)) {
+      return res.status(400).json({ error: 'ids must be an array of task IDs' });
+    }
+
+    if (ids.length === 0) {
+      return res.status(400).json({ error: 'ids must contain at least one task ID' });
+    }
+
+    const MAX_BULK = 100;
+    if (ids.length > MAX_BULK) {
+      return res.status(400).json({ error: `Cannot delete more than ${MAX_BULK} tasks at once` });
+    }
+
+    const invalidId = ids.find(
+      (id) => typeof id !== 'string' || id.length === 0 || id.length > 100
+    );
+    if (invalidId !== undefined) {
+      return res.status(400).json({ error: 'Each id must be a non-empty string of at most 100 characters' });
+    }
+
+    const batch = db.batch();
+    for (const id of ids) {
+      batch.delete(db.collection('tasks').doc(id));
+    }
+    await batch.commit();
+
+    res.json({ deleted: ids.length, ids });
+  } catch (error) {
+    console.error('Error bulk-deleting tasks:', error);
+    res.status(500).json({ error: 'Failed to delete tasks' });
+  }
+});
+
 app.post('/tasks', validateTaskInput, async (req, res) => {
   try {
-    const { title } = req.body;
+    const { title, color } = req.body;
+    const dueTs = req.body._parsedDueDate;
 
     const taskRef = db.collection('tasks').doc();
     const task = {
-      id: taskRef.id,
       title,
       completed: false,
       createdAt: FieldValue.serverTimestamp()
     };
+
+    if (dueTs !== null) {
+      task.dueDate = dueTs;
+    }
+    if (color !== undefined && color !== null) {
+      task.color = color;
+    }
 
     await taskRef.set(task);
 
@@ -153,7 +268,13 @@ app.patch('/tasks/:id', async (req, res) => {
       return res.status(400).json({ error: 'Invalid task ID' });
     }
 
-    const sanitizedUpdates = sanitizeUpdateData(req.body);
+    const sanitizedResult = sanitizeUpdateData(req.body);
+
+    if (sanitizedResult.error) {
+      return res.status(400).json({ error: sanitizedResult.error });
+    }
+
+    const sanitizedUpdates = sanitizedResult.data;
 
     if (Object.keys(sanitizedUpdates).length === 0) {
       return res.status(400).json({ error: 'No valid fields to update' });
