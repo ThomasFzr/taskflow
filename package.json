@@ -16,7 +16,7 @@
     "cors": "^2.8.5",
     "cross-env": "^7.0.3",
     "dotenv": "^16.3.1",
-    "express": "^4.18.2",
+    "express": "^4.22.1",
     "express-rate-limit": "^8.3.0",
     "firebase-admin": "^13.2.0",
     "helmet": "^8.1.0"
@@ -34,5 +34,12 @@
     "nodemon": "^3.0.1",
     "prettier": "^3.5.3",
     "supertest": "^7.0.0"
+  },
+  "overrides": {
+    "@tootallnate/once": "^3.0.1",
+    "path-to-regexp": "^0.1.13",
+    "flatted": "^3.4.2",
+    "node-forge": "^1.4.0",
+    "picomatch": "^2.3.2"
   }
 }
