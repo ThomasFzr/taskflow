@@ -19,6 +19,18 @@ describe('🚀 API Tasks - Tests Approfondis', () => {
             expect(Array.isArray(res.body)).toBe(true);
             expect(res.body[0].title).toBe('Mock Task');
         });
+
+        it('✅ Chaque tâche expose id, title, completed et createdAt', async () => {
+            const res = await request(app).get('/tasks');
+            expect(res.status).toBe(200);
+            const task = res.body[0];
+            expect(task).toMatchObject({
+                id: '1',
+                title: 'Mock Task',
+                completed: false,
+            });
+            expect(typeof task.createdAt).toBe('string');
+        });
     });
 
     describe('POST /tasks', () => {
@@ -67,12 +79,45 @@ describe('🚀 API Tasks - Tests Approfondis', () => {
               .send({ title: 'New' });
             expect(res.status).toBe(404);
         });
+
+        it('❌ Rejeter une mise à jour sans champ valide', async () => {
+            const res = await request(app)
+              .patch('/tasks/1')
+              .send({});
+
+            expect(res.status).toBe(400);
+            expect(res.body.error).toBe('No valid fields to update');
+        });
+
+        it('❌ Rejeter un ID de tâche trop long', async () => {
+            const longId = 'x'.repeat(101);
+            const res = await request(app)
+              .patch(`/tasks/${longId}`)
+              .send({ title: 'Ok' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error).toBe('Invalid task ID');
+        });
     });
 
     describe('DELETE /tasks/:id', () => {
         it('✅ Supprimer une tâche existante', async () => {
             const res = await request(app).delete('/tasks/1');
             expect(res.status).toBe(204);
+        });
+
+        it('❌ Retourner 404 si la tâche n’existe pas', async () => {
+            const res = await request(app).delete('/tasks/999');
+            expect(res.status).toBe(404);
+            expect(res.body.error).toBe('Task not found');
+        });
+    });
+
+    describe('Routes inconnues', () => {
+        it('❌ Retourner 404 pour une route non définie', async () => {
+            const res = await request(app).get('/tasks/legacy/foo');
+            expect(res.status).toBe(404);
+            expect(res.body.error).toBe('Route not found');
         });
     });
 
