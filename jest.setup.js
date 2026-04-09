@@ -23,6 +23,8 @@ jest.unstable_mockModule('firebase-admin', () => {
                 data: () => ({
                   title: 'Mock Task',
                   completed: false,
+                  dueDate: null,
+                  color: null,
                   createdAt: new Date().toISOString(),
                 }),
               },
@@ -33,6 +35,8 @@ jest.unstable_mockModule('firebase-admin', () => {
                 data: () => ({
                   title: 'Mock Task',
                   completed: false,
+                  dueDate: null,
+                  color: null,
                   createdAt: new Date().toISOString(),
                 }),
               });
@@ -44,6 +48,8 @@ jest.unstable_mockModule('firebase-admin', () => {
           let taskData = {
             title: 'Mock Task',
             completed: false,
+            dueDate: null,
+            color: null,
             createdAt: new Date().toISOString(),
           };
           return {
@@ -56,7 +62,10 @@ jest.unstable_mockModule('firebase-admin', () => {
                   id === '1' || id === '123' || !id ? taskData : null,
               })
             ),
-            set: jest.fn(() => Promise.resolve()),
+            set: jest.fn((data) => {
+              taskData = { ...taskData, ...data };
+              return Promise.resolve();
+            }),
             update: jest.fn((updates) => {
               taskData = { ...taskData, ...updates };
               return Promise.resolve();
@@ -66,6 +75,10 @@ jest.unstable_mockModule('firebase-admin', () => {
         }),
       };
     }),
+    batch: jest.fn(() => ({
+      delete: jest.fn(),
+      commit: jest.fn(() => Promise.resolve()),
+    })),
     FieldValue: {
       serverTimestamp: jest.fn(() => new Date().toISOString()),
     },
@@ -73,6 +86,11 @@ jest.unstable_mockModule('firebase-admin', () => {
 
   const mockFirestore = jest.fn(() => mockFirestoreInstance);
   mockFirestore.FieldValue = mockFirestoreInstance.FieldValue;
+  mockFirestore.Timestamp = {
+    fromDate: jest.fn((date) => ({
+      toDate: () => date,
+    })),
+  };
 
   return {
     default: {
